@@ -111,7 +111,7 @@ void loop()
     Serial.write(R1On, 4);
     delay(50);
     Serial.write(R2On, 4);
-    delay(1000 * 15);
+    delay(1000 * 21);
     Serial.write(R1Off, 4);
     delay(50);
     Serial.write(R2Off, 4);
@@ -121,7 +121,7 @@ void loop()
     Serial.write(R3On, 4);
     delay(50);
     Serial.write(R4On, 4);
-    delay(1000 * 21);
+    delay(1000 * 15);
     Serial.write(R3Off, 4);
     delay(50);
     Serial.write(R4Off, 4);
