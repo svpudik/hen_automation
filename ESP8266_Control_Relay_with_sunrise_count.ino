@@ -16,8 +16,8 @@ uint8_t R1Off[] = {0xA0, 0x03, 0x00, 0xA3};
 uint8_t R2On[] = {0xA0, 0x04, 0x01, 0xA5};
 uint8_t R2Off[] = {0xA0, 0x04, 0x00, 0xA4};
 
-const char* ssid = "<wifiSSID>"; // fill in here your router or wifi SSID
-const char* password = "<wifiPassword>"; // fill in here your router or wifi password
+const char* ssid = "OpenWrtextender"; // fill in here your router or wifi SSID
+const char* password = "77533791"; // fill in here your router or wifi password
 
 int Hours;
 int Minutes;
@@ -30,7 +30,7 @@ int sunrise;
 
 ESP8266WebServer server(80);
 
-const long utcOffsetInSeconds = 7200;
+const long utcOffsetInSeconds = 3600;
 unsigned char
 leap_days ;
 unsigned int
@@ -42,14 +42,14 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
 void setup()
 {
-  pinMode(CH_PD,OUTPUT);
-  pinMode(RST,OUTPUT);
-  pinMode(GPIO0,OUTPUT);
-  digitalWrite(CH_PD,HIGH);
-  digitalWrite(RST,HIGH);
-  digitalWrite(GPIO0,HIGH);
+  pinMode(CH_PD, OUTPUT);
+  pinMode(RST, OUTPUT);
+  pinMode(GPIO0, OUTPUT);
+  digitalWrite(CH_PD, HIGH);
+  digitalWrite(RST, HIGH);
+  digitalWrite(GPIO0, HIGH);
   Serial.begin(115200);
-  
+
   Serial.println("initial timeout . . .");
   delay(1000 * 8);
 
@@ -77,7 +77,7 @@ void setup()
 
   // Get time from web
   timeClient.begin();
-  
+
   server.on("/", handle_OnConnect);
   server.onNotFound(handle_NotFound);
   server.begin();
@@ -87,7 +87,7 @@ void setup()
 }
 
 void loop()
-{ 
+{
   // Print current time
   timeClient.update();
   epoch = timeClient.getEpochTime();
@@ -99,24 +99,25 @@ void loop()
   for (i = 1972; i < ntp_year; i += 4) // Calculating number of leap days since epoch/1970
     if (((i % 4 == 0) && (i % 100 != 0)) || (i % 400 == 0)) leap_days++;
   day_of_year = ((days_since_epoch - leap_days) % 365) + 1;
-  int sunset = 1144 - 170 * cos((day_of_year + 8) / 49);
-  int sunrise = 392 + 117 * cos((day_of_year + 8) / 49);
+  int sunset = (1144 - 144 * cos((day_of_year + 8) / 58.09))+30;
+  int sunrise = (380 + 121 * cos((day_of_year + 8) / 58.09))-20;
+  Serial.println(day_of_year);
   sunriseHour = sunrise / 60;
   sunriseMin = sunrise % 60;
   sunsetHour = sunset / 60;
   sunsetMin = sunset % 60;
-  
-  if (timeClient.getHours() == (sunrise / 60) && timeClient.getMinutes() == (sunrise % 60))
+
+  if (timeClient.getHours() == (sunriseHour) && timeClient.getMinutes() == (sunriseMin))
   {
     Serial.write(R1On, 4);
     delay(50);
     Serial.write(R2On, 4);
-    delay(1000 * 21);
+    delay(1000 * 25);
     Serial.write(R1Off, 4);
     delay(50);
     Serial.write(R2Off, 4);
   }
-    if (timeClient.getHours() == (sunset / 60) && timeClient.getMinutes() == (sunset % 60))
+  if (timeClient.getHours() == (sunsetHour) && timeClient.getMinutes() == (sunsetMin))
   {
     Serial.write(R3On, 4);
     delay(50);
