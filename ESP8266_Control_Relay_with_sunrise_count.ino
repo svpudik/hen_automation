@@ -49,10 +49,11 @@ ESP8266WebServer server(80);
 
 // NTP Client setup
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600); // UTC+1 (adjust offset as needed)
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 0); // UTC time, DST handled manually
 
-// Timezone offset in seconds (3600 for UTC+1, 7200 for UTC+2, etc.)
-const long utcOffsetInSeconds = 3600;
+// Timezone offset in seconds (Europe: UTC+1 in winter, UTC+2 in summer)
+long utcOffsetInSeconds = 3600;
+bool isDaylightSavingTime = false;
 
 void setup() {
   Serial.begin(115200);
@@ -100,12 +101,10 @@ void setup() {
     Serial.println("\n✗ Failed to connect to WiFi");
   }
   
-  // Setup NTP time
+  // Setup NTP time in UTC
   timeClient.begin();
   timeClient.setUpdateInterval(60000); // Update every 60 seconds
-  
-  // Configure timezone
-  configTime(utcOffsetInSeconds, 0, "pool.ntp.org", "time.nist.gov");
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   
   // Setup web server routes
   server.on("/", handleRoot);
@@ -123,25 +122,77 @@ void setup() {
 }
 
 void loop() {
-  // Handle mDNS updates
   MDNS.update();
-  
-  // Handle web server requests
   server.handleClient();
-  
-  // Update time
+
   timeClient.update();
-  Hours = timeClient.getHours();
-  Minutes = timeClient.getMinutes();
-  Seconds = timeClient.getSeconds();
-  
-  // Calculate day of year and sunrise/sunset times
+  updateDaylightSavingTime();
+
+  // Convert UTC time to local time using current DST offset
+  time_t now = timeClient.getEpochTime();
+  now += utcOffsetInSeconds;
+  struct tm* timeinfo = gmtime(&now);
+
+  Hours = timeinfo->tm_hour;
+  Minutes = timeinfo->tm_min;
+  Seconds = timeinfo->tm_sec;
+  dayOfYear = timeinfo->tm_yday;
+
   updateSunTimes();
-  
-  // Check if it's time for sunrise/sunset events
   checkScheduledEvents();
-  
+
   delay(100);
+}
+
+void updateDaylightSavingTime() {
+  time_t now = timeClient.getEpochTime();
+  struct tm* utcInfo = gmtime(&now);
+  int year = utcInfo->tm_year + 1900;
+  int month = utcInfo->tm_mon + 1;
+  int day = utcInfo->tm_mday;
+
+  // Central European DST rules:
+  // Starts last Sunday in March at 02:00 UTC
+  // Ends last Sunday in October at 03:00 local time (01:00 UTC)
+  bool dst = false;
+
+  if (month > 3 && month < 10) {
+    dst = true;
+  } else if (month == 3) {
+    int lastSunday = getLastSundayOfMonth(year, 3);
+    if (day > lastSunday || (day == lastSunday && utcInfo->tm_hour >= 1)) {
+      dst = true;
+    }
+  } else if (month == 10) {
+    int lastSunday = getLastSundayOfMonth(year, 10);
+    if (day < lastSunday || (day == lastSunday && utcInfo->tm_hour < 1)) {
+      dst = true;
+    }
+  }
+
+  isDaylightSavingTime = dst;
+  utcOffsetInSeconds = isDaylightSavingTime ? 7200 : 3600;
+}
+
+int getLastSundayOfMonth(int year, int month) {
+  struct tm timeStruct = {0};
+  timeStruct.tm_year = year - 1900;
+  timeStruct.tm_mon = month - 1;
+  timeStruct.tm_mday = 31; // Last possible day in month
+
+  time_t t = mktime(&timeStruct);
+  struct tm* info = localtime(&t);
+  int daysInMonth = info->tm_mday; // Should be last day of month
+
+  for (int d = daysInMonth; d >= 1; d--) {
+    timeStruct.tm_mday = d;
+    time_t dayT = mktime(&timeStruct);
+    struct tm* dayInfo = localtime(&dayT);
+    if (dayInfo->tm_wday == 0) { // Sunday
+      return d;
+    }
+  }
+  return 1;
 }
 
 void updateSunTimes() {
@@ -149,45 +200,40 @@ void updateSunTimes() {
   
   // Calculate day of year (1-366)
   time_t now = timeClient.getEpochTime();
-  struct tm* timeinfo = localtime(&now);
+  now += utcOffsetInSeconds;
+  struct tm* timeinfo = gmtime(&now);
   dayOfYear = timeinfo->tm_yday;
   
-  // Only recalculate once per day
   if (dayOfYear != lastDayOfYear) {
     lastDayOfYear = dayOfYear;
-    
-    // Simplified sunrise/sunset calculation (adjust for your latitude/longitude)
-    // Formula: sunrise/sunset varies between roughly 380-500 min and 1050-1150 min throughout year
+
     int sunriseMinutes = (int)(380 + 121 * cos((dayOfYear - 8) / 58.09));
     int sunsetMinutes = (int)(1144 - 144 * cos((dayOfYear - 8) / 58.09));
-    
-    // Adjust for your location (optional fine-tuning)
-    sunriseMinutes -= 20;  // Adjust as needed
-    sunsetMinutes += 30;   // Adjust as needed
-    
+
+    sunriseMinutes -= 20;
+    sunsetMinutes += 30;
+
     sunriseHour = sunriseMinutes / 60;
     sunriseMin = sunriseMinutes % 60;
     sunsetHour = sunsetMinutes / 60;
     sunsetMin = sunsetMinutes % 60;
     
-    Serial.printf("Day %d - Sunrise: %02d:%02d, Sunset: %02d:%02d\n", 
-                  dayOfYear, sunriseHour, sunriseMin, sunsetHour, sunsetMin);
+    Serial.printf("Day %d - DST=%s Sunrise: %02d:%02d, Sunset: %02d:%02d\n",
+                  dayOfYear, isDaylightSavingTime ? "ON" : "OFF",
+                  sunriseHour, sunriseMin, sunsetHour, sunsetMin);
   }
 }
 
 void checkScheduledEvents() {
-  // Sunrise event (morning relays)
-  if (!manualOverride && !morningActive && 
-      Hours == sunriseHour && Minutes == sunriseMin) {
+  if (!manualOverride && !morningActive && Hours == sunriseHour && Minutes == sunriseMin) {
     Serial.println(">> Sunrise event triggered!");
     Serial.write(R1On, 4);
     delay(50);
     Serial.write(R2On, 4);
     morningActive = true;
-    delay(1000); // Debounce
+    delay(1000);
   }
-  
-  // Turn off sunrise after 1 minute
+
   if (morningActive && Minutes >= (sunriseMin + 1)) {
     if (Hours == sunriseHour || Hours == (sunriseHour + 1)) {
       Serial.write(R1Off, 4);
@@ -197,19 +243,16 @@ void checkScheduledEvents() {
       Serial.println("<< Sunrise relays turned off");
     }
   }
-  
-  // Sunset event (evening relays)
-  if (!manualOverride && !eveningActive && 
-      Hours == sunsetHour && Minutes == sunsetMin) {
+
+  if (!manualOverride && !eveningActive && Hours == sunsetHour && Minutes == sunsetMin) {
     Serial.println(">> Sunset event triggered!");
     Serial.write(R3On, 4);
     delay(50);
     Serial.write(R4On, 4);
     eveningActive = true;
-    delay(1000); // Debounce
+    delay(1000);
   }
-  
-  // Turn off sunset after 15 minutes
+
   if (eveningActive && Minutes >= (sunsetMin + 15)) {
     if (Hours == sunsetHour || Hours == (sunsetHour + 1)) {
       Serial.write(R3Off, 4);
@@ -274,7 +317,8 @@ void handleStatus() {
   json += "\"morningActive\":" + String(morningActive ? "true" : "false") + ",";
   json += "\"eveningActive\":" + String(eveningActive ? "true" : "false") + ",";
   json += "\"manualOverride\":" + String(manualOverride ? "true" : "false") + ",";
-  json += "\"dayOfYear\":" + String(dayOfYear, DEC);
+  json += "\"dayOfYear\":" + String(dayOfYear, DEC) + ",";
+  json += "\"isDST\":" + String(isDaylightSavingTime ? "true" : "false");
   json += "}";
   
   server.send(200, "application/json", json);
@@ -327,6 +371,13 @@ void handleRoot() {
             text-align: center;
             margin-bottom: 15px;
             font-family: 'Courier New', monospace;
+        }
+        .dst-indicator {
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 15px;
+            font-weight: 600;
         }
         .sun-times {
             display: grid;
@@ -469,6 +520,7 @@ void handleRoot() {
         
         <div class="info-section">
             <div class="time-display" id="currentTime">--:--</div>
+            <div class="dst-indicator" id="dstIndicator">Checking time mode...</div>
             <div class="sun-times">
                 <div class="sun-time">
                     <label>🌅 Sunrise</label>
@@ -532,6 +584,15 @@ void handleRoot() {
                     document.getElementById('sunriseTime').textContent = data.sunrise;
                     document.getElementById('sunsetTime').textContent = data.sunset;
                     
+                    const dstIndicator = document.getElementById('dstIndicator');
+                    if (data.isDST) {
+                        dstIndicator.textContent = '☀️ LETNÍ ČAS (UTC+2)';
+                        dstIndicator.style.color = '#ff9800';
+                    } else {
+                        dstIndicator.textContent = '❄️ ZIMNÍ ČAS (UTC+1)';
+                        dstIndicator.style.color = '#2196f3';
+                    }
+                    
                     const morningBadge = document.getElementById('morningStatus');
                     morningBadge.textContent = data.morningActive ? 'ACTIVE' : 'INACTIVE';
                     morningBadge.className = data.morningActive ? 'status-value active' : 'status-value inactive';
@@ -569,7 +630,6 @@ void handleRoot() {
                 .catch(err => console.error('Control failed:', err));
         }
 
-        // Update status on page load and every 1 second
         updateStatus();
         setInterval(updateStatus, 1000);
     </script>
