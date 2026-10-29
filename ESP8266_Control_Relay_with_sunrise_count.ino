@@ -44,6 +44,12 @@ bool manualOverride = false;
 bool manualMorningState = false;
 bool manualEveningState = false;
 
+// Hard timeout values for motion control
+const uint32_t MORNING_OPEN_TIMEOUT_MS = 60000UL;   // 60s opening window
+const uint32_t EVENING_CLOSE_TIMEOUT_MS = 16000UL;    // 16s closing window
+uint32_t morningStartMillis = 0;
+uint32_t eveningStartMillis = 0;
+
 // Web server
 ESP8266WebServer server(80);
 
@@ -224,43 +230,57 @@ void updateSunTimes() {
   }
 }
 
+void startMorningRelays() {
+  Serial.println(">> Sunrise event triggered!");
+  Serial.write(R1On, 4);
+  delay(50);
+  Serial.write(R2On, 4);
+  morningActive = true;
+  morningStartMillis = millis();
+}
+
+void stopMorningRelays() {
+  Serial.write(R1Off, 4);
+  delay(50);
+  Serial.write(R2Off, 4);
+  morningActive = false;
+  Serial.println("<< Sunrise relays turned off");
+}
+
+void startEveningRelays() {
+  Serial.println(">> Sunset event triggered!");
+  Serial.write(R3On, 4);
+  delay(50);
+  Serial.write(R4On, 4);
+  eveningActive = true;
+  eveningStartMillis = millis();
+}
+
+void stopEveningRelays() {
+  Serial.write(R3Off, 4);
+  delay(50);
+  Serial.write(R4Off, 4);
+  eveningActive = false;
+  Serial.println("<< Sunset relays turned off");
+}
+
 void checkScheduledEvents() {
+  // Morning event: start at sunrise time; hard timeout 60 seconds max.
   if (!manualOverride && !morningActive && Hours == sunriseHour && Minutes == sunriseMin) {
-    Serial.println(">> Sunrise event triggered!");
-    Serial.write(R1On, 4);
-    delay(50);
-    Serial.write(R2On, 4);
-    morningActive = true;
-    delay(1000);
+    startMorningRelays();
   }
 
-  if (morningActive && Minutes >= (sunriseMin + 1)) {
-    if (Hours == sunriseHour || Hours == (sunriseHour + 1)) {
-      Serial.write(R1Off, 4);
-      delay(50);
-      Serial.write(R2Off, 4);
-      morningActive = false;
-      Serial.println("<< Sunrise relays turned off");
-    }
+  if (morningActive && (millis() - morningStartMillis >= MORNING_OPEN_TIMEOUT_MS)) {
+    stopMorningRelays();
   }
 
+  // Evening event: start at sunset time; hard timeout 16 seconds max.
   if (!manualOverride && !eveningActive && Hours == sunsetHour && Minutes == sunsetMin) {
-    Serial.println(">> Sunset event triggered!");
-    Serial.write(R3On, 4);
-    delay(50);
-    Serial.write(R4On, 4);
-    eveningActive = true;
-    delay(1000);
+    startEveningRelays();
   }
 
-  if (eveningActive && Minutes >= (sunsetMin + 15)) {
-    if (Hours == sunsetHour || Hours == (sunsetHour + 1)) {
-      Serial.write(R3Off, 4);
-      delay(50);
-      Serial.write(R4Off, 4);
-      eveningActive = false;
-      Serial.println("<< Sunset relays turned off");
-    }
+  if (eveningActive && (millis() - eveningStartMillis >= EVENING_CLOSE_TIMEOUT_MS)) {
+    stopEveningRelays();
   }
 }
 
@@ -271,33 +291,25 @@ void handleControl() {
     if (action == "morningOn") {
       manualOverride = true;
       manualMorningState = true;
-      Serial.write(R1On, 4);
-      delay(50);
-      Serial.write(R2On, 4);
+      startMorningRelays();
       Serial.println("Manual: Morning relays ON");
     } 
     else if (action == "morningOff") {
       manualOverride = true;
       manualMorningState = false;
-      Serial.write(R1Off, 4);
-      delay(50);
-      Serial.write(R2Off, 4);
+      stopMorningRelays();
       Serial.println("Manual: Morning relays OFF");
     } 
     else if (action == "eveningOn") {
       manualOverride = true;
       manualEveningState = true;
-      Serial.write(R3On, 4);
-      delay(50);
-      Serial.write(R4On, 4);
+      startEveningRelays();
       Serial.println("Manual: Evening relays ON");
     } 
     else if (action == "eveningOff") {
       manualOverride = true;
       manualEveningState = false;
-      Serial.write(R3Off, 4);
-      delay(50);
-      Serial.write(R4Off, 4);
+      stopEveningRelays();
       Serial.println("Manual: Evening relays OFF");
     }
     else if (action == "autoMode") {
