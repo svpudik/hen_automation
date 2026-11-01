@@ -46,7 +46,9 @@ bool manualEveningState = false;
 
 // Hard timeout values for motion control
 const uint32_t MORNING_OPEN_TIMEOUT_MS = 60000UL;   // 60s opening window
-const uint32_t EVENING_CLOSE_TIMEOUT_MS = 16000UL;    // 16s closing window
+const uint32_t MIN_DOOR_CLOSE_SECONDS = 1UL;
+const uint32_t MAX_DOOR_CLOSE_SECONDS = 180UL;
+uint32_t doorCloseSeconds = 16UL; // Adjustable close duration in seconds
 uint32_t morningStartMillis = 0;
 uint32_t eveningStartMillis = 0;
 
@@ -60,6 +62,20 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", 0); // UTC time, DST handled manual
 // Timezone offset in seconds (Europe: UTC+1 in winter, UTC+2 in summer)
 long utcOffsetInSeconds = 3600;
 bool isDaylightSavingTime = false;
+
+uint32_t getDoorCloseTimeMs() {
+  return doorCloseSeconds * 1000UL;
+}
+
+void adjustDoorCloseSeconds(int delta) {
+  long adjusted = (long)doorCloseSeconds + delta;
+
+  if (adjusted < (long)MIN_DOOR_CLOSE_SECONDS) adjusted = (long)MIN_DOOR_CLOSE_SECONDS;
+  if (adjusted > (long)MAX_DOOR_CLOSE_SECONDS) adjusted = (long)MAX_DOOR_CLOSE_SECONDS;
+
+  doorCloseSeconds = (uint32_t)adjusted;
+  Serial.printf("Door close timer set to %lu seconds\n", (unsigned long)doorCloseSeconds);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -274,12 +290,12 @@ void checkScheduledEvents() {
     stopMorningRelays();
   }
 
-  // Evening event: start at sunset time; hard timeout 16 seconds max.
+  // Evening event: start at sunset time; hard timeout depends on configured door close time.
   if (!manualOverride && !eveningActive && Hours == sunsetHour && Minutes == sunsetMin) {
     startEveningRelays();
   }
 
-  if (eveningActive && (millis() - eveningStartMillis >= EVENING_CLOSE_TIMEOUT_MS)) {
+  if (eveningActive && (millis() - eveningStartMillis >= getDoorCloseTimeMs())) {
     stopEveningRelays();
   }
 }
@@ -312,6 +328,12 @@ void handleControl() {
       stopEveningRelays();
       Serial.println("Manual: Evening relays OFF");
     }
+    else if (action == "adjustCloseTime") {
+      if (server.hasArg("delta")) {
+        int delta = server.arg("delta").toInt();
+        adjustDoorCloseSeconds(delta);
+      }
+    }
     else if (action == "autoMode") {
       manualOverride = false;
       Serial.println("Auto mode restored");
@@ -329,6 +351,7 @@ void handleStatus() {
   json += "\"morningActive\":" + String(morningActive ? "true" : "false") + ",";
   json += "\"eveningActive\":" + String(eveningActive ? "true" : "false") + ",";
   json += "\"manualOverride\":" + String(manualOverride ? "true" : "false") + ",";
+  json += "\"doorCloseSeconds\":" + String(doorCloseSeconds, DEC) + ",";
   json += "\"dayOfYear\":" + String(dayOfYear, DEC) + ",";
   json += "\"isDST\":" + String(isDaylightSavingTime ? "true" : "false");
   json += "}";
@@ -480,6 +503,37 @@ void handleRoot() {
             grid-template-columns: 1fr 1fr;
             gap: 10px;
         }
+        .timer-control {
+            display: grid;
+            grid-template-columns: 52px 1fr 52px;
+            gap: 10px;
+            align-items: center;
+        }
+        .timer-btn {
+            padding: 12px 15px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 24px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #17a2b8;
+            color: white;
+        }
+        .timer-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(23, 162, 184, 0.3);
+        }
+        .timer-value {
+            text-align: center;
+            font-size: 30px;
+            font-weight: bold;
+            color: #333;
+            background: white;
+            border-radius: 8px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+        }
         button {
             padding: 12px 15px;
             border: none;
@@ -558,6 +612,10 @@ void handleRoot() {
                 <span class="status-label">Control Mode</span>
                 <span class="status-value auto" id="modeStatus">AUTO</span>
             </div>
+            <div class="status-item">
+                <span class="status-label">Door Close Time</span>
+                <span class="status-value auto" id="doorCloseDisplay">16s</span>
+            </div>
         </div>
 
         <div class="control-section">
@@ -574,6 +632,15 @@ void handleRoot() {
                 <div class="button-group">
                     <button class="btn-on" onclick="sendControl('eveningOn')">ON</button>
                     <button class="btn-off" onclick="sendControl('eveningOff')">OFF</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>🚪 Door Close Timer</h3>
+                <div class="timer-control">
+                    <button class="timer-btn" onclick="adjustCloseTime(-1)" aria-label="Decrease by 1 second">−</button>
+                    <div class="timer-value" id="closeTimerValue">16s</div>
+                    <button class="timer-btn" onclick="adjustCloseTime(1)" aria-label="Increase by 1 second">+</button>
                 </div>
             </div>
 
@@ -595,6 +662,8 @@ void handleRoot() {
                     document.getElementById('currentTime').textContent = data.time;
                     document.getElementById('sunriseTime').textContent = data.sunrise;
                     document.getElementById('sunsetTime').textContent = data.sunset;
+                    document.getElementById('closeTimerValue').textContent = data.doorCloseSeconds + 's';
+                    document.getElementById('doorCloseDisplay').textContent = data.doorCloseSeconds + 's';
                     
                     const dstIndicator = document.getElementById('dstIndicator');
                     if (data.isDST) {
@@ -640,6 +709,15 @@ void handleRoot() {
                     updateStatus();
                 })
                 .catch(err => console.error('Control failed:', err));
+        }
+
+        function adjustCloseTime(delta) {
+            fetch(`/control?action=adjustCloseTime&delta=${delta}`)
+                .then(response => response.json())
+                .then(data => {
+                    updateStatus();
+                })
+                .catch(err => console.error('Close timer update failed:', err));
         }
 
         updateStatus();
