@@ -80,9 +80,9 @@ void adjustDoorCloseSeconds(int delta) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  
+
   Serial.println("\n\nESP8266 Hen Automation Starting...");
-  
+
   // Initialize relay control pins
   pinMode(CH_PD, OUTPUT);
   pinMode(RST, OUTPUT);
@@ -90,26 +90,26 @@ void setup() {
   digitalWrite(CH_PD, HIGH);
   digitalWrite(RST, HIGH);
   digitalWrite(GPIO0, HIGH);
-  
+
   // Connect to WiFi (DHCP - no static IP)
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
-  
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  
+
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n✓ WiFi connected!");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-    
+
     // Setup mDNS
     if (MDNS.begin(mdnsHostname)) {
       Serial.print("✓ mDNS started! Access via: http://");
@@ -122,19 +122,19 @@ void setup() {
   } else {
     Serial.println("\n✗ Failed to connect to WiFi");
   }
-  
+
   // Setup NTP time in UTC
   timeClient.begin();
   timeClient.setUpdateInterval(60000); // Update every 60 seconds
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  
+
   // Setup web server routes
   server.on("/", handleRoot);
   server.on("/status", handleStatus);
   server.on("/control", handleControl);
   server.onNotFound(handleNotFound);
   server.begin();
-  
+
   Serial.println("Web server started");
   Serial.print("Open browser and go to: http://");
   Serial.print(WiFi.localIP());
@@ -219,13 +219,13 @@ int getLastSundayOfMonth(int year, int month) {
 
 void updateSunTimes() {
   static int lastDayOfYear = -1;
-  
+
   // Calculate day of year (1-366)
   time_t now = timeClient.getEpochTime();
   now += utcOffsetInSeconds;
   struct tm* timeinfo = gmtime(&now);
   dayOfYear = timeinfo->tm_yday;
-  
+
   if (dayOfYear != lastDayOfYear) {
     lastDayOfYear = dayOfYear;
 
@@ -239,7 +239,7 @@ void updateSunTimes() {
     sunriseMin = sunriseMinutes % 60;
     sunsetHour = sunsetMinutes / 60;
     sunsetMin = sunsetMinutes % 60;
-    
+
     Serial.printf("Day %d - DST=%s Sunrise: %02d:%02d, Sunset: %02d:%02d\n",
                   dayOfYear, isDaylightSavingTime ? "ON" : "OFF",
                   sunriseHour, sunriseMin, sunsetHour, sunsetMin);
@@ -303,25 +303,25 @@ void checkScheduledEvents() {
 void handleControl() {
   if (server.hasArg("action")) {
     String action = server.arg("action");
-    
+
     if (action == "morningOn") {
       manualOverride = true;
       manualMorningState = true;
       startMorningRelays();
       Serial.println("Manual: Morning relays ON");
-    } 
+    }
     else if (action == "morningOff") {
       manualOverride = true;
       manualMorningState = false;
       stopMorningRelays();
       Serial.println("Manual: Morning relays OFF");
-    } 
+    }
     else if (action == "eveningOn") {
       manualOverride = true;
       manualEveningState = true;
       startEveningRelays();
       Serial.println("Manual: Evening relays ON");
-    } 
+    }
     else if (action == "eveningOff") {
       manualOverride = true;
       manualEveningState = false;
@@ -339,7 +339,7 @@ void handleControl() {
       Serial.println("Auto mode restored");
     }
   }
-  
+
   server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
@@ -355,7 +355,7 @@ void handleStatus() {
   json += "\"dayOfYear\":" + String(dayOfYear, DEC) + ",";
   json += "\"isDST\":" + String(isDaylightSavingTime ? "true" : "false");
   json += "}";
-  
+
   server.send(200, "application/json", json);
 }
 
@@ -583,7 +583,7 @@ void handleRoot() {
 <body>
     <div class="container">
         <h1>🐔 Hen Automation Control</h1>
-        
+
         <div class="info-section">
             <div class="time-display" id="currentTime">--:--</div>
             <div class="dst-indicator" id="dstIndicator">Checking time mode...</div>
@@ -613,7 +613,7 @@ void handleRoot() {
                 <span class="status-value auto" id="modeStatus">AUTO</span>
             </div>
             <div class="status-item">
-                <span class="status-label">Door Close Time</span>
+                <span class="status-label">Evening Close</span>
                 <span class="status-value auto" id="doorCloseDisplay">16s</span>
             </div>
         </div>
@@ -622,21 +622,21 @@ void handleRoot() {
             <div class="control-group">
                 <h3>🌅 Morning Relays</h3>
                 <div class="button-group">
-                    <button class="btn-on" onclick="sendControl('morningOn')">ON</button>
-                    <button class="btn-off" onclick="sendControl('morningOff')">OFF</button>
+                    <button class="btn-on" onclick="sendControl('morningOn')">START</button>
+                    <button class="btn-off" onclick="sendControl('morningOff')">STOP</button>
                 </div>
             </div>
 
             <div class="control-group">
                 <h3>🌇 Evening Relays</h3>
                 <div class="button-group">
-                    <button class="btn-on" onclick="sendControl('eveningOn')">ON</button>
-                    <button class="btn-off" onclick="sendControl('eveningOff')">OFF</button>
+                    <button class="btn-on" onclick="sendControl('eveningOn')">START</button>
+                    <button class="btn-off" onclick="sendControl('eveningOff')">STOP</button>
                 </div>
             </div>
 
             <div class="control-group">
-                <h3>🚪 Door Close Timer</h3>
+                <h3>🚪 Evening Close Timer</h3>
                 <div class="timer-control">
                     <button class="timer-btn" onclick="adjustCloseTime(-1)" aria-label="Decrease by 1 second">−</button>
                     <div class="timer-value" id="closeTimerValue">16s</div>
@@ -664,7 +664,7 @@ void handleRoot() {
                     document.getElementById('sunsetTime').textContent = data.sunset;
                     document.getElementById('closeTimerValue').textContent = data.doorCloseSeconds + 's';
                     document.getElementById('doorCloseDisplay').textContent = data.doorCloseSeconds + 's';
-                    
+
                     const dstIndicator = document.getElementById('dstIndicator');
                     if (data.isDST) {
                         dstIndicator.textContent = '☀️ LETNÍ ČAS (UTC+2)';
@@ -673,15 +673,15 @@ void handleRoot() {
                         dstIndicator.textContent = '❄️ ZIMNÍ ČAS (UTC+1)';
                         dstIndicator.style.color = '#2196f3';
                     }
-                    
+
                     const morningBadge = document.getElementById('morningStatus');
                     morningBadge.textContent = data.morningActive ? 'ACTIVE' : 'INACTIVE';
                     morningBadge.className = data.morningActive ? 'status-value active' : 'status-value inactive';
-                    
+
                     const eveningBadge = document.getElementById('eveningStatus');
                     eveningBadge.textContent = data.eveningActive ? 'ACTIVE' : 'INACTIVE';
                     eveningBadge.className = data.eveningActive ? 'status-value active' : 'status-value inactive';
-                    
+
                     const modeStatus = document.getElementById('modeStatus');
                     if (data.manualOverride) {
                         modeStatus.textContent = 'MANUAL';
@@ -692,9 +692,9 @@ void handleRoot() {
                         modeStatus.style.background = '#17a2b8';
                         modeStatus.style.color = 'white';
                     }
-                    
+
                     const now = new Date();
-                    document.getElementById('lastUpdate').textContent = 
+                    document.getElementById('lastUpdate').textContent =
                         now.getHours().toString().padStart(2, '0') + ':' +
                         now.getMinutes().toString().padStart(2, '0') + ':' +
                         now.getSeconds().toString().padStart(2, '0');
@@ -726,7 +726,7 @@ void handleRoot() {
 </body>
 </html>
 )====" ;
-  
+
   server.send(200, "text/html", html);
 }
 
