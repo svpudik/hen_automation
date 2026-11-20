@@ -44,6 +44,11 @@ bool manualOverride = false;
 bool manualMorningState = false;
 bool manualEveningState = false;
 
+// Scheduled event latches prevent re-triggering during the same minute
+int scheduledDayOfYear = -1;
+bool morningTriggeredToday = false;
+bool eveningTriggeredToday = false;
+
 // Hard timeout values for motion control
 const uint32_t MORNING_OPEN_TIMEOUT_MS = 60000UL;   // 60s opening window
 const uint32_t MIN_DOOR_CLOSE_SECONDS = 1UL;
@@ -281,8 +286,17 @@ void stopEveningRelays() {
 }
 
 void checkScheduledEvents() {
-  // Morning event: start at sunrise time; hard timeout 60 seconds max.
-  if (!manualOverride && !morningActive && Hours == sunriseHour && Minutes == sunriseMin) {
+  // Reset scheduled-event latches when the local calendar day changes.
+  if (dayOfYear != scheduledDayOfYear) {
+    scheduledDayOfYear = dayOfYear;
+    morningTriggeredToday = false;
+    eveningTriggeredToday = false;
+  }
+
+  // Morning event: start once at sunrise; hard timeout 60 seconds max.
+  if (!manualOverride && !morningTriggeredToday && !morningActive &&
+      Hours == sunriseHour && Minutes == sunriseMin) {
+    morningTriggeredToday = true;
     startMorningRelays();
   }
 
@@ -290,8 +304,10 @@ void checkScheduledEvents() {
     stopMorningRelays();
   }
 
-  // Evening event: start at sunset time; hard timeout depends on configured door close time.
-  if (!manualOverride && !eveningActive && Hours == sunsetHour && Minutes == sunsetMin) {
+  // Evening event: start once at sunset; timeout depends on configured close time.
+  if (!manualOverride && !eveningTriggeredToday && !eveningActive &&
+      Hours == sunsetHour && Minutes == sunsetMin) {
+    eveningTriggeredToday = true;
     startEveningRelays();
   }
 
